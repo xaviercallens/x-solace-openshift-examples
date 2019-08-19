@@ -1,0 +1,913 @@
+apiVersion: v1
+kind: Template
+metadata:
+  annotations:
+    description: 'Solace HA PS+ Cluster (Persistent) with ConfigSync V2 '
+    iconClass: icon-openshift
+    tags: messaging
+  creationTimestamp: null
+  name: sol-ha-persist-deployconfig-configmap-template
+  
+#
+# Create Primary VMR POD
+#
+  
+objects:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${POD_NAME}prim
+    labels:
+      pod: ${POD_NAME}prim
+      deploymentconfig: ${POD_NAME}prim
+      vmrgroup: ${POD_NAME}-member
+  spec:
+#    nodeSelector:
+#      region: ${AZ_VALUE_PRIM}
+#    serviceAccountName: vmr
+    strategy:
+      type: Rolling
+      rollingParams:
+        updatePeriodSeconds: 1
+        intervalSeconds: 1
+        timeoutSeconds: 600
+      resources: {}
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+    replicas: 1
+    selector:
+        deploymentconfig: ${POD_NAME}prim
+    template:
+      metadata:
+        labels:
+          deploymentconfig: ${POD_NAME}prim
+          vmrgroup: ${POD_NAME}-member
+          
+      spec:
+        containers:
+          - env:
+            - name: username_${ADMIN_USER}_password
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: username
+            - name: username_${ADMIN_USER}_globalaccesslevel
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: password
+            - name: node_ordinal
+              value:  '0'
+            - name: STATEFULSET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: routername
+              value: ${POD_NAME}prim
+            - name: service_ssh_port
+              value: "2222"
+            - name: service_webtransport_port
+              value: "60080"
+            - name: service_webtransport_tlsport
+              value: "60443"
+            - name: service_semp_tlsport
+              value: "60943"
+            - name: logging_event_output
+              value: all
+            - name: logging_event_format
+              value: "rfc5424"
+            - name: service_healthcheck_port 
+              value: "5550"
+            - name: configsync_enable
+              value: "yes"
+            - name: redundancy_activestandbyrole
+              value: primary
+            - name: redundancy_enable
+              value: yes
+            - name: redundancy_group_node_${POD_NAME}prim_connectvia
+              value: "prim-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}prim_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}sec_connectvia
+              value: "sec-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}sec_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}mon_connectvia
+              value: "mon-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}mon_nodetype
+              value: monitoring
+            - name: redundancy_group_password
+              value: admin
+            - name: redundancy_matelink_connectvia
+              value: "sec-${POD_NAME}-cluster-svc.${PROJECT}.svc"
+            - name: service_redundancy_firstlistenport
+              value: "8300"
+             
+            name: ${POD_NAME}prim
+            image: '${SOLACE_IMAGE}'
+            ports:
+            - containerPort: 60080
+              protocol: TCP
+            - containerPort: 8080
+              protocol: TCP
+            - containerPort: 55555
+              protocol: TCP
+            - containerPort: 2222
+              protocol: TCP
+            - containerPort: 8300
+              protocol: TCP
+            - containerPort: 8301
+              protocol: TCP
+            - containerPort: 8301
+              protocol: UDP
+            - containerPort: 8302
+              protocol: TCP
+            - containerPort: 8302
+              protocol: UDP
+            - containerPort: 8741
+              protocol: TCP
+            - containerPort: 5550
+              protocol: TCP
+            - containerPort: 60943
+              protocol: TCP
+            - containerPort: 60443
+              protocol: TCP
+              
+            securityContext:
+              privileged: false
+              
+            volumeMounts:
+            - name: config-map
+              mountPath: /mnt/disks/solace
+            - mountPath: /dev/shm
+              name: dshm-prim
+            - mountPath: /usr/sw/internalSpool/softAdb
+              subPath: softAdb
+              name: poddata-${POD_NAME}prim
+            - mountPath: /usr/sw/adb
+              subPath: adb
+              name: poddata-${POD_NAME}prim
+            - mountPath:  /usr/sw/var
+              subPath: var
+              name: poddata-${POD_NAME}prim
+            - mountPath:  /usr/sw/internalSpool
+              subPath: internalSpool
+              name: poddata-${POD_NAME}prim
+            - mountPath:  /var/lib/solace/diags
+              subPath: diags
+              name: poddata-${POD_NAME}prim
+            - mountPath:  /usr/sw/jail
+              subPath: jail
+              name: poddata-${POD_NAME}prim
+            resources:
+              requests:
+                memory: "4096Mi"
+                cpu: "2"
+              limits:
+                memory: "6144Mi"
+                cpu: "2"
+                
+            livenessProbe:
+              exec:
+                command:
+                - ls
+                - /tmp
+#              tcpSocket:
+#                port: 5550
+              initialDelaySeconds: 10
+              timeoutSeconds: 5
+            readinessProbe:
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              exec:
+                command:
+                - /mnt/disks/solace/readiness_check.sh
+                - "7"
+  
+            command:
+              - bash
+              - "-ec"
+              - |
+               #source /mnt/disks/solace/init.sh
+               # not using postinstall hooks because of order dependencies
+               # launch config check then Solace so VCMR can provide return code
+               nohup /mnt/disks/solace/config-sync-check.sh &
+               /usr/sbin/boot.sh
+  
+
+            
+        volumes:
+        - emptyDir:
+            medium: Memory
+          name: dshm-prim
+        - name: poddata-${POD_NAME}prim
+          persistentVolumeClaim:
+            claimName: poddata-${POD_NAME}prim
+        - name: config-map
+          configMap:
+            name: "solace-configmap"
+            defaultMode: 0755
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'prim-${POD_NAME}-node-port-svc'
+    annotations:
+      description: 'Exposes the VMR services to external sources via any Node'
+  spec:
+    type: NodePort
+    selector:
+      deploymentconfig: ${POD_NAME}prim
+    portalIP: 
+    ports:
+    - name: 'smf-web'
+      nodePort: 
+      port: 60080              
+      protocol: TCP
+      targetPort: 60080
+    - name: 'semp'
+      nodePort: 
+      port: 8080             
+      protocol: TCP
+      targetPort: 8080
+    - name: 'smf'
+      nodePort: 
+      port: 55555             
+      protocol: TCP
+      targetPort: 55555
+    - name: 'ssh-alternate'
+      nodePort: 
+      port: 2222         
+      protocol: TCP
+      targetPort: 2222
+
+      
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'prim-${POD_NAME}-cluster-svc'
+    annotations:
+      description: 'Maps VMR to static IP within cluster'
+  spec:  
+    type: ClusterIP
+    clusterIP: None
+    selector:
+      deploymentconfig: ${POD_NAME}prim
+    ports:
+    - name: 'smf'
+      port: 55555
+      targetPort: 55555
+    - name: 'ssh'
+      port: 2222
+      targetPort: 2222
+    - name: 'ha-port1'
+      port: 8300
+      targetPort: 8300
+    - name: 'ha-port2'
+      port: 8301
+      targetPort: 8301
+    - name: 'ha-port2u'
+      port: 8301
+      targetPort: 8301
+      protocol: UDP
+    - name: 'ha-port3'
+      port: 8302
+      targetPort: 8302
+    - name: 'ha-port3u'
+      port: 8302
+      targetPort: 8302
+      protocol: UDP
+    - name: 'ha-port4'
+      port: 8741
+      targetPort: 8741 
+    - name: 'health-port'
+      port: 5550
+      targetPort: 5550
+
+    
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: poddata-${POD_NAME}prim
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
+
+    
+#
+# Create Secondary VMR POD
+#
+  
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${POD_NAME}sec
+    labels:
+      pod: ${POD_NAME}sec
+      vmrgroup: ${POD_NAME}-member
+      deploymentconfig: ${POD_NAME}sec
+  spec:
+#    nodeSelector:
+#      region: ${AZ_VALUE_SEC}
+#    serviceAccountName: vmr
+    strategy:
+      type: Rolling
+      rollingParams:
+        updatePeriodSeconds: 1
+        intervalSeconds: 1
+        timeoutSeconds: 600
+      resources: {}
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+    replicas: 1
+    selector:
+        deploymentconfig: ${POD_NAME}sec
+    template:
+      metadata:
+        labels:
+          deploymentconfig: ${POD_NAME}sec
+          vmrgroup: ${POD_NAME}-member
+      spec:
+        containers:
+          - env:
+            - name: USERNAME_${ADMIN_USER}_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: username
+            - name: USERNAME_${ADMIN_USER}_GLOBALACCESSLEVEL
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: password
+            - name: node_ordinal
+              value:  '1'
+            - name: STATEFULSET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: routername
+              value: ${POD_NAME}sec
+            - name: service_ssh_port
+              value: "2222"
+            - name: service_webtransport_port
+              value: "60080"
+            - name: service_webtransport_tlsport
+              value: "60443"
+            - name: service_semp_tlsport
+              value: "60943"
+            - name: logging_event_output
+              value: all
+            - name: logging_event_format
+              value: "rfc5424"
+            - name: service_healthcheck_port 
+              value: "5550"
+            - name: configsync_enable
+              value: "yes"
+            - name: redundancy_activestandbyrole
+              value: backup
+            - name: redundancy_enable
+              value: yes
+            - name: redundancy_group_node_${POD_NAME}prim_connectvia
+              value: "prim-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}prim_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}sec_connectvia
+              value: "sec-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}sec_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}mon_connectvia
+              value: "mon-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}mon_nodetype
+              value: monitoring
+            - name: redundancy_group_password
+              value: admin
+            - name: redundancy_matelink_connectvia
+              value: "prim-${POD_NAME}-cluster-svc.${PROJECT}.svc"
+            - name: service_redundancy_firstlistenport
+              value: "8300"
+              
+            name: ${POD_NAME}sec
+            image: '${SOLACE_IMAGE}'
+            ports:
+            - containerPort: 60080
+              protocol: TCP
+            - containerPort: 8080
+              protocol: TCP
+            - containerPort: 55555
+              protocol: TCP
+            - containerPort: 2222
+              protocol: TCP
+            - containerPort: 8300
+              protocol: TCP
+            - containerPort: 8301
+              protocol: TCP
+            - containerPort: 8301
+              protocol: UDP
+            - containerPort: 8302
+              protocol: TCP
+            - containerPort: 8302
+              protocol: UDP
+            - containerPort: 8741
+              protocol: TCP
+            - containerPort: 5550
+              protocol: TCP
+            - containerPort: 60943
+              protocol: TCP
+            - containerPort: 60443
+              protocol: TCP
+              
+            securityContext:
+              privileged: false
+              
+            volumeMounts:
+            - name: config-map
+              mountPath: /mnt/disks/solace
+            - mountPath: /dev/shm
+              name: dshm-sec
+            - mountPath: /usr/sw/internalSpool/softAdb
+              subPath: softAdb
+              name: poddata-${POD_NAME}sec
+            - mountPath: /usr/sw/adb
+              subPath: adb
+              name: poddata-${POD_NAME}sec
+            - mountPath:  /usr/sw/var
+              subPath: var
+              name: poddata-${POD_NAME}sec
+            - mountPath:  /usr/sw/internalSpool
+              subPath: internalSpool
+              name: poddata-${POD_NAME}sec
+            - mountPath:  /var/lib/solace/diags
+              subPath: diags
+              name: poddata-${POD_NAME}sec
+            - mountPath:  /usr/sw/jail
+              subPath: jail
+              name: poddata-${POD_NAME}sec
+            resources:
+              requests:
+                memory: "4096Mi"
+                cpu: "2"
+              limits:
+                memory: "6144Mi"
+                cpu: "2"
+                
+            livenessProbe:
+              exec:
+                command:
+                - ls
+                - /tmp
+#              tcpSocket:
+#                port: 5550
+              initialDelaySeconds: 10
+              timeoutSeconds: 5
+            readinessProbe:
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              exec:
+                command:
+                - /mnt/disks/solace/readiness_check.sh
+                - "7"
+
+
+
+        volumes:
+        - emptyDir:
+            medium: Memory
+          name: dshm-sec
+        - name: poddata-${POD_NAME}sec
+          persistentVolumeClaim:
+            claimName: poddata-${POD_NAME}sec
+        - name: config-map
+          configMap:
+            name: "solace-configmap"
+            defaultMode: 0755
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'sec-${POD_NAME}-node-port-svc'
+    annotations:
+      description: 'Exposes the VMR services to external sources via any Node'
+  spec:
+    type: NodePort
+    selector:
+      deploymentconfig: ${POD_NAME}sec
+    portalIP: 
+    ports:
+    - name: 'smf-web'
+      nodePort: 
+      port: 60080              
+      protocol: TCP
+      targetPort: 60080
+    - name: 'semp'
+      nodePort: 
+      port: 8080             
+      protocol: TCP
+      targetPort: 8080
+    - name: 'smf'
+      nodePort: 
+      port: 55555             
+      protocol: TCP
+      targetPort: 55555
+    - name: 'ssh-alternate'
+      nodePort: 
+      port: 2222         
+      protocol: TCP
+      targetPort: 2222
+
+      
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'sec-${POD_NAME}-cluster-svc'
+    annotations:
+      description: 'Maps VMR to static IP within cluster'
+  spec:  
+    type: ClusterIP
+    clusterIP: None
+    selector:
+      deploymentconfig: ${POD_NAME}sec
+    ports:
+    - name: 'smf'
+      port: 55555
+      targetPort: 55555
+    - name: 'ssh'
+      port: 2222
+      targetPort: 2222
+    - name: 'ha-port1'
+      port: 8300
+      targetPort: 8300
+    - name: 'ha-port2'
+      port: 8301
+      targetPort: 8301
+    - name: 'ha-port2u'
+      port: 8301
+      targetPort: 8301
+      protocol: UDP
+    - name: 'ha-port3'
+      port: 8302
+      targetPort: 8302
+    - name: 'ha-port3u'
+      port: 8302
+      targetPort: 8302
+      protocol: UDP
+    - name: 'ha-port4'
+      port: 8741
+      targetPort: 8741 
+    - name: 'health-port'
+      port: 5550
+      targetPort: 5550
+
+    
+      
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: poddata-${POD_NAME}sec
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
+    
+    
+#
+# Create Monitoring VMR POD
+#
+ 
+    
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${POD_NAME}mon
+    labels:
+      pod: ${POD_NAME}mon
+      deploymentconfig: ${POD_NAME}mon
+      
+  spec:
+#    nodeSelector:
+#      region: ${AZ_VALUE_MON}
+    strategy:
+      type: Rolling
+      rollingParams:
+        updatePeriodSeconds: 1
+        intervalSeconds: 1
+        timeoutSeconds: 600
+      resources: {}
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+    replicas: 1
+    selector:
+        deploymentconfig: ${POD_NAME}mon
+    template:
+      metadata:
+        labels:
+          deploymentconfig: ${POD_NAME}mon
+      spec: 
+#        serviceAccountName: vmr
+        containers:
+          - env:
+            - name: username_${ADMIN_USER}_password
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: username
+            - name: username_${ADMIN_USER}_globalaccesslevel
+              valueFrom:
+                secretKeyRef:
+                  name: admin-secret
+                  key: password
+            - name: node_ordinal
+              value:  '2'
+            - name: STATEFULSET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: routername
+              value: ${POD_NAME}mon
+            - name: service_ssh_port
+              value: "2222"
+            - name: service_webtransport_port
+              value: "60080"
+            - name: service_webtransport_tlsport
+              value: "60443"
+            - name: service_semp_tlsport
+              value: "60943"
+            - name: logging_event_output
+              value: all
+            - name: logging_event_format
+              value: "rfc5424"
+            - name: service_healthcheck_port 
+              value: "5550"
+            - name: nodetype
+              value: monitoring
+            - name: configsync_enable
+              value: "no"
+            - name: redundancy_activestandbyrole
+              value: static
+            - name: redundancy_enable
+              value: yes
+            - name: redundancy_group_node_${POD_NAME}prim_connectvia
+              value: "prim-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}prim_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}sec_connectvia
+              value: "sec-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}sec_nodetype
+              value: message_routing
+            - name: redundancy_group_node_${POD_NAME}mon_connectvia
+              value: "mon-${POD_NAME}-cluster-svc.${PROJECT}.svc:8300"
+            - name: redundancy_group_node_${POD_NAME}mon_nodetype
+              value: monitoring
+            - name: redundancy_group_password
+              value: admin
+            - name: redundancy_matelink_connectvia
+              value: "sec-${POD_NAME}-cluster-svc.${PROJECT}.svc"
+            - name: service_redundancy_firstlistenport
+              value: "8300"
+              
+            name: ${POD_NAME}mon
+            image: '${SOLACE_IMAGE}'
+            ports:
+            - containerPort: 60080
+              protocol: TCP
+            - containerPort: 8080
+              protocol: TCP
+            - containerPort: 55555
+              protocol: TCP
+            - containerPort: 2222
+              protocol: TCP
+            - containerPort: 8300
+              protocol: TCP
+            - containerPort: 8301
+              protocol: TCP
+            - containerPort: 8301
+              protocol: UDP
+            - containerPort: 8302
+              protocol: TCP
+            - containerPort: 8302
+              protocol: UDP
+            - containerPort: 8741
+              protocol: TCP
+            - containerPort: 5550
+              protocol: TCP
+            - containerPort: 60943
+              protocol: TCP
+            - containerPort: 60443
+              protocol: TCP
+              
+            securityContext:
+              privileged: false
+              
+            volumeMounts:
+            - name: config-map
+              mountPath: /mnt/disks/solace
+            - mountPath: /dev/shm
+              name: dshm-mon
+            - mountPath: /usr/sw/internalSpool/softAdb
+              subPath: softAdb
+              name: poddata-${POD_NAME}mon
+            - mountPath: /usr/sw/adb
+              subPath: adb
+              name: poddata-${POD_NAME}mon
+            - mountPath:  /usr/sw/var
+              subPath: var
+              name: poddata-${POD_NAME}mon
+            - mountPath:  /usr/sw/internalSpool
+              subPath: internalSpool
+              name: poddata-${POD_NAME}mon
+            - mountPath:  /var/lib/solace/diags
+              subPath: diags
+              name: poddata-${POD_NAME}mon
+            - mountPath:  /usr/sw/jail
+              subPath: jail
+              name: poddata-${POD_NAME}mon
+            resources:
+              requests:
+                memory: "4096Mi"
+                cpu: "1"
+              limits:
+                memory: "4096Mi"
+                cpu: "1"
+            livenessProbe:
+              exec:
+                command:
+                - ls
+                - /tmp
+#              tcpSocket:
+#                port: 5550
+              initialDelaySeconds: 10
+              timeoutSeconds: 5
+            readinessProbe:
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              exec:
+                command:
+                - /mnt/disks/solace/readiness_check.sh
+                - "7"
+        
+
+        
+        volumes:
+        - emptyDir:
+            medium: Memory
+          name: dshm-mon
+        - name: poddata-${POD_NAME}mon
+          persistentVolumeClaim:
+            claimName: poddata-${POD_NAME}mon
+        - name: config-map
+          configMap:
+            name: "solace-configmap"
+            defaultMode: 0755
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'mon-${POD_NAME}-node-port-svc'
+    annotations:
+      description: 'Exposes the VMR services to external sources via any Node'
+  spec:
+    type: NodePort
+    selector:
+      deploymentconfig: ${POD_NAME}mon
+    portalIP: 
+    ports:
+    - name: 'smf-web'
+      nodePort: 
+      port: 60080              
+      protocol: TCP
+      targetPort: 60080
+    - name: 'semp'
+      nodePort: 
+      port: 8080             
+      protocol: TCP
+      targetPort: 8080
+    - name: 'smf'
+      nodePort: 
+      port: 55555             
+      protocol: TCP
+      targetPort: 55555
+    - name: 'ssh-alternate'
+      nodePort: 
+      port: 2222         
+      protocol: TCP
+      targetPort: 2222 
+
+      
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'mon-${POD_NAME}-cluster-svc'
+    annotations:
+      description: 'Maps VMR to static IP within cluster'
+  spec:  
+    type: ClusterIP
+    clusterIP: None
+    selector:
+      deploymentconfig: ${POD_NAME}mon
+    ports:
+    - name: 'smf'
+      port: 55555
+      targetPort: 55555
+    - name: 'ssh'
+      port: 2222
+      targetPort: 2222
+    - name: 'ha-port1'
+      port: 8300
+      targetPort: 8300
+    - name: 'ha-port2'
+      port: 8301
+      targetPort: 8301
+    - name: 'ha-port2u'
+      port: 8301
+      targetPort: 8301
+      protocol: UDP
+    - name: 'ha-port3'
+      port: 8302
+      targetPort: 8302
+    - name: 'ha-port3u'
+      port: 8302
+      targetPort: 8302
+      protocol: UDP
+    - name: 'ha-port4'
+      port: 8741
+      targetPort: 8741 
+    - name: 'health-port'
+      port: 5550
+      targetPort: 5550
+
+    
+      
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: poddata-${POD_NAME}mon
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
+        
+        
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: 'ha-${POD_NAME}-lb-svc'
+    annotations:
+      description: 'Exposes the VMR services to external sources via any Node'
+  spec:
+    type: LoadBalancer
+    selector:
+      vmrgroup: ${POD_NAME}-member
+      active: "true"
+    portalIP: 
+    ports:
+    - name: 'smf'
+      port: 55555
+      targetPort: 55555
+    - name: 'health'
+      port: 5550
+      targetPort: 5550
+      
+  
+parameters:
+- description: The name of the Solace Messaging Cluster
+  name: POD_NAME
+  required: true
+  value: vmr
+  
+- description: Username of the admin user
+  name: ADMIN_USER
+  required: true
+  value: admin
+
+  
+- description: Name of the OpenShift Project to use
+  name: PROJECT
+  required: true
+  value: solace
+  
+- description: 'The name PS+ image in the local Docker Registry in the form: registryIP:port/project/image:tag'
+  from: '[a-z0-9]{40}'
+  name: SOLACE_IMAGE
+  value: 'docker-registry.default.svc:5000/solace/solace-app:latest'
+  
+  
+  
+  
+  
