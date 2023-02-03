@@ -159,7 +159,7 @@ parameters:
   from: '[a-z0-9]{40}'
   generate: expression
   name: POD_NAME
-  value: gem-tst-sol-single-presist-pod-1
+  value: gem-tst-sol-single-persist-pod-1
 - description: Username of the admin user
   from: '[a-zA-Z0-9]{16}'
   generate: expression
