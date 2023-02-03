@@ -78,7 +78,7 @@ objects:
             cpu: "4"
 
     securityContext:
-      privileged: false
+      privileged: true
 
     volumes:
     - emptyDir:
