@@ -158,7 +158,7 @@ parameters:
 - description: The name of the Solace Messaging service to create
   from: '[a-z0-9]{40}'
   generate: expression
-  name: gem-sol-single-presist-pod-tst
+  name: gem-tst-sol-single-presist-pod-1
   value: vmr
 - description: Username of the admin user
   from: '[a-zA-Z0-9]{16}'
