@@ -164,7 +164,6 @@ parameters:
   displayName: Image Registry URL
   description: The image registry URL for the registry containing the PubSub+ Event Broker docker image
   value: dockerhub.rnd.amadeus.net:5000/solace/pubsubplus-standard #registry.connect.redhat.com/solace/pubsubplus-standard
-  required: true
 - description: Username of the admin user
   from: '[a-zA-Z0-9]{16}'
   generate: expression
