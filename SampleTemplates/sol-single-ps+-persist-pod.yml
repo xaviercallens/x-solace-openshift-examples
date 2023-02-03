@@ -168,5 +168,5 @@ parameters:
 - description: Password of the admin user
   from: '[a-zA-Z0-9]{16}'
   generate: expression
-  name: c3Ryb25nQGRtaW5QdyHCoA==
-  value: admin
+  name: ADMIN_PASSWORD
+  value: c3Ryb25nQGRtaW5QdyHCoA==
